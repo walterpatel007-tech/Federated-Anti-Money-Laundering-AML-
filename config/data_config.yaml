@@ -1,0 +1,23 @@
+raw_data_dir: data/raw
+processed_data_dir: data/processed
+bank_splits_dir: data/bank_splits
+bank_partitions:
+  bank_a:
+    filter:
+      bank_id: "A"
+  bank_b:
+    filter:
+      bank_id: "B"
+  bank_c:
+    filter:
+      bank_id: "C"
+index_column: transaction_id
+timestamp_column: timestamp
+label_column: is_suspicious
+feature_columns:
+  - amount
+  - hour_of_day
+  - origin_balance
+  - destination_balance
+  - customer_risk_score
+  - transaction_type_encoded

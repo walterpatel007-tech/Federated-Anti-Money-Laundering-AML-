@@ -1,0 +1,18 @@
+version: "3.9"
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.server
+    command: ["python", "-m", "aml_federated_training.train_federated", "--data-config", "config/data_config.yaml", "--model-config", "config/model_config.yaml", "--federated-config", "config/federated_config.yaml"]
+    volumes:
+      - ../:/app
+  api:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile.api
+    command: ["uvicorn", "aml_serving_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../:/app
