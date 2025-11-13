@@ -7,6 +7,7 @@ from typing import Any, Dict
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
+from torch import Tensor
 from torchmetrics.classification import (
     BinaryAccuracy,
     BinaryF1Score,
@@ -28,6 +29,7 @@ class AMLClassifier(pl.LightningModule):
         dropout: float = 0.0,
     ) -> None:
         super().__init__()
+        self.save_hyperparameters()
         layers = []
         last_dim = input_dim
         for hidden_dim in hidden_dims:
@@ -46,8 +48,13 @@ class AMLClassifier(pl.LightningModule):
         self.weight_decay = weight_decay
         self.class_weight = class_weight
 
-        pos_weight = torch.tensor(class_weight) if class_weight is not None else None
-        self.loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        if class_weight is not None:
+            pos_weight = torch.tensor(float(class_weight), dtype=torch.float32)
+            self.register_buffer("pos_weight", pos_weight)
+        else:
+            self.pos_weight = None
+
+        self.loss_fn = nn.BCEWithLogitsLoss(pos_weight=self.pos_weight)
 
         self.train_precision = BinaryPrecision()
         self.train_recall = BinaryRecall()
@@ -59,42 +66,89 @@ class AMLClassifier(pl.LightningModule):
     def forward(self, x: torch.Tensor) -> torch.Tensor:  # pragma: no cover - thin wrapper
         return self.network(x).squeeze(-1)
 
-    def _step(self, batch: Any, stage: str) -> Dict[str, torch.Tensor]:
+    def _step(self, batch: Any, stage: str) -> Tensor:
         features, labels = batch
         logits = self(features)
         loss = self.loss_fn(logits, labels.float())
         preds = torch.sigmoid(logits)
-        metrics = {
-            f"{stage}_loss": loss,
-        }
+        label_int = labels.int()
+
+        self.log(
+            f"{stage}_loss",
+            loss,
+            prog_bar=True,
+            on_step=False,
+            on_epoch=True,
+            batch_size=label_int.size(0),
+        )
+
         if stage == "train":
-            self.train_precision(preds, labels.int())
-            self.train_recall(preds, labels.int())
-            metrics["train_precision"] = self.train_precision.compute()
-            metrics["train_recall"] = self.train_recall.compute()
-            self.log_dict(metrics, prog_bar=True, on_step=False, on_epoch=True)
-        else:
-            self.val_precision(preds, labels.int())
-            self.val_recall(preds, labels.int())
-            self.val_f1(preds, labels.int())
-            self.val_accuracy(preds, labels.int())
-            metrics.update(
-                {
-                    "val_precision": self.val_precision.compute(),
-                    "val_recall": self.val_recall.compute(),
-                    "val_f1": self.val_f1.compute(),
-                    "val_accuracy": self.val_accuracy.compute(),
-                }
+            self.log(
+                "train_precision",
+                self.train_precision(preds, label_int),
+                prog_bar=False,
+                on_step=False,
+                on_epoch=True,
+                batch_size=label_int.size(0),
             )
-            self.log_dict(metrics, prog_bar=True, on_step=False, on_epoch=True)
-        return metrics
+            self.log(
+                "train_recall",
+                self.train_recall(preds, label_int),
+                prog_bar=False,
+                on_step=False,
+                on_epoch=True,
+                batch_size=label_int.size(0),
+            )
+        else:
+            self.log(
+                "val_precision",
+                self.val_precision(preds, label_int),
+                prog_bar=False,
+                on_step=False,
+                on_epoch=True,
+                batch_size=label_int.size(0),
+            )
+            self.log(
+                "val_recall",
+                self.val_recall(preds, label_int),
+                prog_bar=False,
+                on_step=False,
+                on_epoch=True,
+                batch_size=label_int.size(0),
+            )
+            self.log(
+                "val_f1",
+                self.val_f1(preds, label_int),
+                prog_bar=False,
+                on_step=False,
+                on_epoch=True,
+                batch_size=label_int.size(0),
+            )
+            self.log(
+                "val_accuracy",
+                self.val_accuracy(preds, label_int),
+                prog_bar=False,
+                on_step=False,
+                on_epoch=True,
+                batch_size=label_int.size(0),
+            )
+        return loss
 
     def training_step(self, batch: Any, batch_idx: int) -> torch.Tensor:
-        metrics = self._step(batch, "train")
-        return metrics["train_loss"]
+        return self._step(batch, "train")
 
     def validation_step(self, batch: Any, batch_idx: int) -> None:  # pragma: no cover - logging only
         self._step(batch, "val")
+
+    def on_train_epoch_end(self) -> None:  # pragma: no cover - Lightning hook
+        self.train_precision.reset()
+        self.train_recall.reset()
+
+    def on_validation_epoch_end(self) -> None:  # pragma: no cover - Lightning hook
+        self.val_precision.reset()
+        self.val_recall.reset()
+        self.val_f1.reset()
+        self.val_accuracy.reset()
 
     def configure_optimizers(self):  # pragma: no cover - Lightning API
         optimizer = torch.optim.Adam(
